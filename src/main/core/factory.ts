@@ -26,6 +26,7 @@ import { createLogger } from '../utils/logger'
 import { decryptAgeContent } from '../utils/age'
 import { DEFAULT_CONTROL_DNS, DEFAULT_CONTROL_SNIFF } from '../../shared/appConfig'
 import { atomicWriteFile } from '../utils/safeFile'
+import { ensureTailscaleStateDirs } from './tailscale'
 
 const factoryLogger = createLogger('Factory')
 const SMART_OVERRIDE_ID = 'smart-core-override'
@@ -149,6 +150,12 @@ export async function generateProfile(
   }
 
   const profile = deepMerge(currentProfile, controledMihomoConfig)
+  const addedTailscaleStateDirs = ensureTailscaleStateDirs(profile, current || 'default')
+  if (addedTailscaleStateDirs > 0) {
+    factoryLogger.info('Assigned stable state directories to Tailscale proxies', {
+      count: addedTailscaleStateDirs
+    })
+  }
   // 关闭 DNS 覆写时，如果最终配置没有启用的 DNS 配置，清空 dns-hijack 避免请求被劫持但无法处理
   if (!controlDns && profile.tun && !profile.dns?.enable) {
     profile.tun = { ...profile.tun, 'dns-hijack': [] }

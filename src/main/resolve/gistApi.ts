@@ -8,6 +8,8 @@ import { getRuntimeConfigStr } from '../core/factory'
 import { encryptAgeContent, generateAgeKeyPair } from '../utils/age'
 import { createLogger } from '../utils/logger'
 import { atomicWriteFile } from '../utils/safeFile'
+import { parse } from '../utils/yaml'
+import { containsTailscaleAuthKey } from '../core/tailscale'
 
 interface GistInfo {
   id: string
@@ -114,6 +116,9 @@ export async function getGistUrl(): Promise<string> {
 async function uploadRuntimeConfigContent(runtimeConfig: string): Promise<boolean> {
   const { githubToken, gistAgeEncrypt = false, gistAgeRecipient } = await getAppConfig()
   if (!githubToken) return false
+  if (!gistAgeEncrypt && containsTailscaleAuthKey(parse<{ proxies?: unknown }>(runtimeConfig))) {
+    throw new Error('Tailscale auth-key requires Gist Runtime Config Age Encryption')
+  }
   const gists = await listGists(githubToken)
   const gist = gists.find((gist) => gist.description === 'Auto Synced Clash Party Runtime Config')
   const config = gistAgeEncrypt

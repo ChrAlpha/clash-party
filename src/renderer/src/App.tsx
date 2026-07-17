@@ -43,6 +43,7 @@ import 'driver.js/dist/driver.css'
 import { useTranslation } from 'react-i18next'
 import { DEFAULT_ENABLE_TRAFFIC_LOGGER, DEFAULT_SIDER_ORDER } from '../../shared/appConfig'
 import MihomoIcon from './components/base/mihomo-icon'
+import TailscaleLoginPrompt from './components/tailscale/tailscale-login-prompt'
 import { SIDER_CARD_ROUTES, getSiderCardByPath, mergeSiderOrder } from './utils/sider'
 
 export { getDriver }
@@ -219,6 +220,7 @@ const App: React.FC = () => {
       }}
       className={`w-full h-screen flex ${resizing ? 'cursor-ew-resize' : ''}`}
     >
+      <TailscaleLoginPrompt />
       {siderWidthValue === narrowWidth ? (
         <div style={{ width: `${narrowWidth}px` }} className="side h-full">
           <div className="app-drag flex justify-center items-center z-40 bg-transparent h-12.25">

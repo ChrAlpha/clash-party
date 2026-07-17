@@ -48,10 +48,11 @@ const ProxyItemBase: React.FC<Props> = (props) => {
   const isLoading = loading || isGroupTesting
 
   const delayText = useMemo(() => {
+    if (proxy.type === 'Tailscale' && delay === -1) return t('tailscale.initialize')
     if (delay === -1) return t('proxies.delay.test')
     if (delay === 0) return t('proxies.delay.timeout')
     return delay.toString()
-  }, [delay, t])
+  }, [delay, proxy.type, t])
 
   const onDelay = useCallback((): void => {
     setLoading(true)
@@ -123,7 +124,7 @@ const ProxyItemBase: React.FC<Props> = (props) => {
               </div>
               <Button
                 isIconOnly
-                title={proxy.type}
+                title={proxy.type === 'Tailscale' ? t('tailscale.initializeTooltip') : proxy.type}
                 isLoading={isLoading}
                 color={delayColor(delay)}
                 onPress={onDelay}
@@ -159,7 +160,7 @@ const ProxyItemBase: React.FC<Props> = (props) => {
               )}
               <Button
                 isIconOnly
-                title={proxy.type}
+                title={proxy.type === 'Tailscale' ? t('tailscale.initializeTooltip') : proxy.type}
                 isLoading={isLoading}
                 color={delayColor(delay)}
                 onPress={onDelay}

@@ -1,6 +1,7 @@
 import { createConnection } from 'net'
 import axios, { AxiosInstance } from 'axios'
 import WebSocket from 'ws'
+import { extractTailscaleLogin, type TailscaleLogin } from '../../shared/tailscale'
 import { getAppConfig, getControledMihomoConfig } from '../config'
 import { mainWindow } from '../window'
 import { tray } from '../resolve/tray'
@@ -11,6 +12,7 @@ import { mihomoWorkConfigPath } from '../utils/dirs'
 import { generateProfile, getRuntimeConfig } from './factory'
 import { getMihomoIpcPath } from './manager'
 import { TailscaleLogCapture } from './tailscaleLogCapture'
+import { TailscaleLoginCache } from './tailscaleLoginCache'
 
 const mihomoApiLogger = createLogger('MihomoApi')
 
@@ -21,7 +23,9 @@ const MAX_RETRY = 10
 const RECONNECT_INTERVAL_MS = 1000
 const LOG_STREAM_READY_TIMEOUT_MS = 5000
 const TAILSCALE_LOG_CAPTURE_DURATION_MS = 45_000
+const TAILSCALE_LOGIN_CACHE_DURATION_MS = 5 * 60 * 1000
 const webSocketReadyCancellations = new WeakMap<WebSocket, (reason: Error) => void>()
+const tailscaleLoginCache = new TailscaleLoginCache(TAILSCALE_LOGIN_CACHE_DURATION_MS, 100)
 
 interface MihomoStreamState {
   ws: WebSocket | null
@@ -458,6 +462,8 @@ export const mihomoHotReloadConfig = async (): Promise<void> => {
   const configPath = diffWorkDir ? mihomoWorkConfigPath(current) : mihomoWorkConfigPath('work')
   mihomoApiLogger.info(`hot reload config path: ${configPath}`)
   const instance = await getAxios()
+  tailscaleLoginCache.clear()
+  mainWindow?.webContents.send('tailscaleLoginCacheCleared')
   await instance.put('/configs?force=true', { path: configPath })
   mihomoApiLogger.info('hot reload config completed')
   try {
@@ -588,6 +594,8 @@ const restartMihomoLogsForTailscale = async (logLevelOverride?: LogLevel): Promi
 }
 
 export const stopMihomoLogs = (): void => {
+  tailscaleLoginCache.clear()
+  mainWindow?.webContents.send('tailscaleLoginCacheCleared')
   tailscaleLogCapture.cancel()
   logsStreamLevelOverride = undefined
   stopStream(logsStream)
@@ -619,7 +627,10 @@ const mihomoLogs = async (waitForOpen: boolean = false): Promise<void> => {
     const data = e.data as string
     logsStream.retry = MAX_RETRY
     try {
-      mainWindow?.webContents.send('mihomoLogs', JSON.parse(data) as IMihomoLogInfo)
+      const log = JSON.parse(data) as IMihomoLogInfo
+      const login = extractTailscaleLogin(log.payload)
+      if (login) tailscaleLoginCache.record(login)
+      mainWindow?.webContents.send('mihomoLogs', log)
     } catch {
       // ignore
     }
@@ -672,6 +683,10 @@ export const mihomoInitializeTailscale = async (
   }
 
   return await mihomoProxyDelay(proxy, url, provider)
+}
+
+export const mihomoTailscaleLogins = async (): Promise<TailscaleLogin[]> => {
+  return tailscaleLoginCache.list()
 }
 
 export const startMihomoConnections = async (): Promise<void> => {

@@ -1,4 +1,5 @@
 import { TitleBarOverlayOptions } from 'electron'
+import type { TailscaleLogin } from '../../../shared/tailscale'
 
 function checkIpcError<T>(response: unknown): T {
   if (response && typeof response === 'object' && 'invokeError' in response) {
@@ -37,6 +38,7 @@ interface IpcApi {
     url?: string,
     provider?: string
   ) => Promise<IMihomoDelay>
+  mihomoTailscaleLogins: () => Promise<TailscaleLogin[]>
   mihomoGroupDelay: (group: string, url?: string) => Promise<IMihomoGroupDelay>
   patchMihomoConfig: (patch: Partial<IMihomoConfig>) => Promise<void>
   mihomoSmartGroupWeights: (groupName: string) => Promise<Record<string, number>>
@@ -205,6 +207,7 @@ export const {
   mihomoUpgradeUI,
   mihomoProxyDelay,
   mihomoInitializeTailscale,
+  mihomoTailscaleLogins,
   mihomoGroupDelay,
   patchMihomoConfig,
   mihomoSmartGroupWeights,

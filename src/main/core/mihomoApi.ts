@@ -13,6 +13,13 @@ import { generateProfile, getRuntimeConfig } from './factory'
 import { getMihomoIpcPath } from './manager'
 import { TailscaleLogCapture } from './tailscaleLogCapture'
 import { TailscaleLoginCache } from './tailscaleLoginCache'
+import {
+  groupProxySources,
+  indexProviderProxies,
+  resolveGroupProxy,
+  type ProviderGroupSourceConfig,
+  type ProviderProxyLookup
+} from './providerProxies'
 
 const mihomoApiLogger = createLogger('MihomoApi')
 
@@ -26,6 +33,11 @@ const TAILSCALE_LOG_CAPTURE_DURATION_MS = 45_000
 const TAILSCALE_LOGIN_CACHE_DURATION_MS = 5 * 60 * 1000
 const webSocketReadyCancellations = new WeakMap<WebSocket, (reason: Error) => void>()
 const tailscaleLoginCache = new TailscaleLoginCache(TAILSCALE_LOGIN_CACHE_DURATION_MS, 100)
+
+function invalidateTailscaleLoginCache(): void {
+  tailscaleLoginCache.clear()
+  mainWindow?.webContents.send('tailscaleLoginCacheCleared')
+}
 
 interface MihomoStreamState {
   ws: WebSocket | null
@@ -301,73 +313,84 @@ async function resolveProviderProxies(
   names: Set<string>,
   providerNames: Set<string>,
   fallbackToAllProviders: boolean
-): Promise<Record<string, IMihomoProxy>> {
-  if (names.size === 0) return {}
+): Promise<ProviderProxyLookup> {
+  if (names.size === 0) return indexProviderProxies([], names)
 
-  const providers =
-    fallbackToAllProviders || providerNames.size > PROVIDER_DETAIL_FETCH_THRESHOLD
-      ? Object.values((await mihomoProxyProviders()).providers)
-      : (
-          await Promise.allSettled([...providerNames].map((name) => mihomoProxyProvider(name)))
-        ).flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []))
+  if (fallbackToAllProviders || providerNames.size > PROVIDER_DETAIL_FETCH_THRESHOLD) {
+    const providers = Object.values((await mihomoProxyProviders()).providers)
+    return indexProviderProxies(providers, names)
+  }
 
-  const providerProxies: Record<string, IMihomoProxy> = {}
-  providers.forEach((provider) => {
-    provider.proxies?.forEach((proxy) => {
-      if (names.has(proxy.name)) {
-        providerProxies[proxy.name] = proxy
-      }
-    })
+  const requestedProviderNames = [...providerNames]
+  const results = await Promise.allSettled(
+    requestedProviderNames.map((name) => mihomoProxyProvider(name))
+  )
+  const providers: IMihomoProxyProvider[] = []
+  const resolvedProviderNames = new Set<string>()
+  results.forEach((result, index) => {
+    if (result.status !== 'fulfilled') return
+    providers.push(result.value)
+    resolvedProviderNames.add(requestedProviderNames[index])
   })
-  return providerProxies
+  return indexProviderProxies(providers, names, resolvedProviderNames)
 }
 
 export const mihomoGroups = async (): Promise<IMihomoMixedGroup[]> => {
   const { mode = 'rule' } = await getControledMihomoConfig()
   if (mode === 'direct') return []
   const [proxies, runtime] = await Promise.all([mihomoProxies(), getRuntimeConfig()])
-  const rawGroups: { group: IMihomoGroup; providers: string[] }[] = []
+  const rawGroups: {
+    group: IMihomoGroup
+    providers: string[] | undefined
+    directProxyNames: Set<string> | undefined
+  }[] = []
 
-  runtime?.['proxy-groups']?.forEach((group: { name: string; url?: string; use?: string[] }) => {
-    const proxy = proxies.proxies[group.name]
-    if (isMihomoGroup(proxy) && !proxy.hidden) {
-      rawGroups.push({ group: { ...proxy, testUrl: group.url }, providers: group.use || [] })
+  runtime?.['proxy-groups']?.forEach(
+    (group: { name: string; url?: string } & ProviderGroupSourceConfig) => {
+      const proxy = proxies.proxies[group.name]
+      if (isMihomoGroup(proxy) && !proxy.hidden) {
+        const { providerNames, directProxyNames } = groupProxySources(group)
+        rawGroups.push({
+          group: { ...proxy, testUrl: group.url },
+          providers: providerNames,
+          directProxyNames
+        })
+      }
     }
-  })
+  )
 
   if (!rawGroups.find(({ group }) => group.name === 'GLOBAL')) {
     const global = proxies.proxies['GLOBAL']
     if (isMihomoGroup(global) && !global.hidden) {
-      rawGroups.push({ group: global, providers: [] })
+      rawGroups.push({ group: global, providers: undefined, directProxyNames: undefined })
     }
   }
 
-  const missingProxyNames = new Set<string>()
+  const providerProxyNames = new Set<string>()
   const providerNames = new Set<string>()
   let fallbackToAllProviders = false
   rawGroups.forEach(({ group, providers }) => {
     const proxyNames = group.all || []
-    proxyNames.forEach((name) => {
-      if (!proxies.proxies[name]) {
-        missingProxyNames.add(name)
-        if (providers.length > 0) {
-          providers.forEach((provider) => providerNames.add(provider))
-        } else {
-          fallbackToAllProviders = true
-        }
-      }
-    })
+    if (providers === undefined) {
+      proxyNames.forEach((name) => providerProxyNames.add(name))
+      fallbackToAllProviders = true
+    } else if (providers.length > 0) {
+      proxyNames.forEach((name) => providerProxyNames.add(name))
+      providers.forEach((provider) => providerNames.add(provider))
+    }
   })
 
   const providerProxies = await resolveProviderProxies(
-    missingProxyNames,
+    providerProxyNames,
     providerNames,
     fallbackToAllProviders
   )
   const groups: IMihomoMixedGroup[] = []
-  rawGroups.forEach(({ group }) => {
+  rawGroups.forEach(({ group, providers, directProxyNames }) => {
     const newAll = (group.all || [])
-      .map((name) => proxies.proxies[name] || providerProxies[name])
+      .map((name) =>
+        resolveGroupProxy(proxies.proxies[name], providerProxies, name, providers, directProxyNames)
+      )
       .filter((proxy): proxy is IMihomoProxy | IMihomoGroup => Boolean(proxy))
     groups.push({ ...group, all: newAll })
   })
@@ -386,7 +409,8 @@ export const mihomoProxyProviders = async (): Promise<IMihomoProxyProviders> => 
 
 export const mihomoUpdateProxyProviders = async (name: string): Promise<void> => {
   const instance = await getAxios()
-  return await instance.put(`/providers/proxies/${encodeURIComponent(name)}`)
+  await instance.put(`/providers/proxies/${encodeURIComponent(name)}`)
+  invalidateTailscaleLoginCache()
 }
 
 export const mihomoRuleProviders = async (): Promise<IMihomoRuleProviders> => {
@@ -462,8 +486,7 @@ export const mihomoHotReloadConfig = async (): Promise<void> => {
   const configPath = diffWorkDir ? mihomoWorkConfigPath(current) : mihomoWorkConfigPath('work')
   mihomoApiLogger.info(`hot reload config path: ${configPath}`)
   const instance = await getAxios()
-  tailscaleLoginCache.clear()
-  mainWindow?.webContents.send('tailscaleLoginCacheCleared')
+  invalidateTailscaleLoginCache()
   await instance.put('/configs?force=true', { path: configPath })
   mihomoApiLogger.info('hot reload config completed')
   try {
@@ -594,8 +617,7 @@ const restartMihomoLogsForTailscale = async (logLevelOverride?: LogLevel): Promi
 }
 
 export const stopMihomoLogs = (): void => {
-  tailscaleLoginCache.clear()
-  mainWindow?.webContents.send('tailscaleLoginCacheCleared')
+  invalidateTailscaleLoginCache()
   tailscaleLogCapture.cancel()
   logsStreamLevelOverride = undefined
   stopStream(logsStream)

@@ -18,6 +18,7 @@
   "common.close": "Закрыть",
   "tailscale.initialize": "Подключить",
   "tailscale.initializeTooltip": "Запустить подключение Tailscale и дождаться ссылки для входа; тайм-аут проверки задержки не означает ошибку входа",
+  "tailscale.providerInitializeTooltip": "Если провайдер загружается из файла или URL, каждому узлу Tailscale нужен уникальный state-dir в конфигурации провайдера. Запустите подключение и дождитесь ссылки для входа; тайм-аут проверки задержки не означает ошибку входа",
   "tailscale.login.title": "Вход в узел Tailscale «{{name}}»",
   "tailscale.login.description": "Mihomo требует завершить аутентификацию Tailscale или Headscale в браузере.",
   "tailscale.login.security": "Перед продолжением убедитесь, что домен ниже принадлежит настроенному серверу управления.",

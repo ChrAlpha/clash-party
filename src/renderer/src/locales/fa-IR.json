@@ -18,6 +18,7 @@
   "common.close": "بستن",
   "tailscale.initialize": "راه‌اندازی",
   "tailscale.initializeTooltip": "اتصال Tailscale را آغاز می‌کند و منتظر پیوند ورود می‌ماند؛ پایان مهلت آزمون تأخیر به معنی شکست ورود نیست",
+  "tailscale.providerInitializeTooltip": "اگر این ارائه‌دهنده از فایل یا نشانی وب بارگیری می‌شود، هر گره Tailscale باید در پیکربندی ارائه‌دهنده یک state-dir یکتا داشته باشد؛ اتصال را آغاز کنید و منتظر پیوند ورود بمانید. پایان مهلت آزمون تأخیر به معنی شکست ورود نیست",
   "tailscale.login.title": "ورود به گره Tailscale «{{name}}»",
   "tailscale.login.description": "Mihomo از شما می‌خواهد احراز هویت Tailscale یا Headscale را در مرورگر کامل کنید.",
   "tailscale.login.security": "پیش از ادامه، مطمئن شوید دامنهٔ زیر متعلق به سرور کنترل پیکربندی‌شدهٔ شماست.",

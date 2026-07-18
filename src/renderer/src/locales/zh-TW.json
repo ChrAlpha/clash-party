@@ -18,6 +18,7 @@
   "common.close": "關閉",
   "tailscale.initialize": "初始化",
   "tailscale.initializeTooltip": "觸發 Tailscale 連線並等待登入連結；測速逾時不代表登入失敗",
+  "tailscale.providerInitializeTooltip": "若此代理提供者從檔案或 URL 載入，每個 Tailscale 節點必須在提供者設定中指定唯一的 state-dir；觸發連線後等待登入連結，測速逾時不代表登入失敗",
   "tailscale.login.title": "登入 Tailscale 節點「{{name}}」",
   "tailscale.login.description": "Mihomo 需要你在瀏覽器中完成 Tailscale 或 Headscale 身分驗證。",
   "tailscale.login.security": "請先確認下方網域屬於你設定的控制伺服器，再繼續。",

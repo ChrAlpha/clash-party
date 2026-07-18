@@ -18,6 +18,7 @@
   "common.close": "Close",
   "tailscale.initialize": "Initialize",
   "tailscale.initializeTooltip": "Start the Tailscale connection and wait for a login link; a delay timeout does not mean login failed",
+  "tailscale.providerInitializeTooltip": "If this provider is loaded from a file or URL, each Tailscale node must set a unique state-dir in the provider config. Start the connection and wait for a login link; a delay timeout does not mean login failed",
   "tailscale.login.title": "Sign in to Tailscale node “{{name}}”",
   "tailscale.login.description": "Mihomo needs you to finish Tailscale or Headscale authentication in your browser.",
   "tailscale.login.security": "Before continuing, verify that the domain below belongs to your configured control server.",

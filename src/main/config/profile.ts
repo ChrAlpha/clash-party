@@ -144,9 +144,12 @@ export async function changeCurrentProfile(id: string): Promise<void> {
           config.current = id
           return config
         })
-        const { useHotReloadProfile = false, hotReloadProfileAutoCloseConnection = false } =
-          await getAppConfig()
-        if (useHotReloadProfile) {
+        const {
+          useHotReloadProfile = false,
+          hotReloadProfileAutoCloseConnection = false,
+          diffWorkDir = false
+        } = await getAppConfig()
+        if (useHotReloadProfile && !diffWorkDir) {
           await mihomoHotReloadConfig()
           if (hotReloadProfileAutoCloseConnection) {
             try {

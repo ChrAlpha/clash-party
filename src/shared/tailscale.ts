@@ -7,18 +7,18 @@ function trimUrlPunctuation(value: string): string {
   return value.replace(/[.,;!\])}]+$/u, '')
 }
 
+const TAILSCALE_LOGIN_LOG =
+  /\[Tailscale\]\(([^)\r\n]+)\)[^\S\r\n]+To start this tsnet server, restart with TS_AUTHKEY set, or go to:[^\S\r\n]+(https?:\/\/[^\s<>"']+)/iu
+
 export function extractTailscaleLogin(payload: string): TailscaleLogin | undefined {
-  const tailscaleLog = payload.match(/\[Tailscale\]\(([^)\r\n]+)\)\s+(.+)/iu)
-  if (!tailscaleLog) return undefined
+  for (const line of payload.split(/\r?\n/u)) {
+    const tailscaleLog = line.match(TAILSCALE_LOGIN_LOG)
+    if (!tailscaleLog) continue
 
-  const [, proxyName, message] = tailscaleLog
-  if (!/(?:authenticat|log[\s-]?in|login|visit)/iu.test(message)) return undefined
-
-  for (const match of message.matchAll(/https?:\/\/[^\s<>"']+/giu)) {
-    const candidate = trimUrlPunctuation(match[0])
+    const [, proxyName, rawUrl] = tailscaleLog
+    const candidate = trimUrlPunctuation(rawUrl)
     try {
       const url = new URL(candidate)
-      if (!['http:', 'https:'].includes(url.protocol)) continue
       if (url.username || url.password) continue
       return { proxyName: proxyName.trim(), url: url.toString().replace(/\/$/u, '') }
     } catch {

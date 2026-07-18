@@ -1,7 +1,12 @@
 import { createHash } from 'crypto'
 
 type MihomoProxyConfig = Record<string, unknown>
-type MihomoProfile = { proxies?: unknown }
+type MihomoProfile = { proxies?: unknown; 'proxy-providers'?: unknown }
+
+interface ScopedTailscaleProxy {
+  proxy: MihomoProxyConfig
+  scope: string
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -11,30 +16,53 @@ function isTailscaleProxy(value: unknown): value is MihomoProxyConfig {
   return isRecord(value) && String(value.type).toLowerCase() === 'tailscale'
 }
 
-function tailscaleProxies(profile: MihomoProfile): MihomoProxyConfig[] {
-  if (!Array.isArray(profile.proxies)) return []
-  return profile.proxies.filter(isTailscaleProxy)
+function tailscaleProxiesInScope(value: unknown, scope: string): ScopedTailscaleProxy[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isTailscaleProxy).map((proxy) => ({ proxy, scope }))
 }
 
-function stateDirectoryForName(name: unknown, profileId: string): string {
+function tailscaleProxies(profile: MihomoProfile): ScopedTailscaleProxy[] {
+  const proxies = tailscaleProxiesInScope(profile.proxies, 'proxies')
+  if (!isRecord(profile['proxy-providers'])) return proxies
+
+  Object.entries(profile['proxy-providers']).forEach(([providerName, provider]) => {
+    if (!isRecord(provider) || String(provider.type).toLowerCase() !== 'inline') return
+    proxies.push(...tailscaleProxiesInScope(provider.payload, `proxy-providers\0${providerName}`))
+  })
+  return proxies
+}
+
+function stateDirectoryForProxy(
+  name: unknown,
+  profileId: string,
+  scope: string,
+  diffWorkDir: boolean
+): string {
   const stableName = typeof name === 'string' && name.trim() ? name.trim() : 'unnamed'
   const id = createHash('sha256')
     .update(profileId)
     .update('\0')
+    .update(scope)
+    .update('\0')
     .update(stableName)
     .digest('hex')
     .slice(0, 16)
-  return `tailscale/${id}`
+  const profileDirectory = diffWorkDir ? '' : `${profileId}/`
+  return `${profileDirectory}tailscale/${id}`
 }
 
-export function ensureTailscaleStateDirs(profile: MihomoProfile, profileId = 'default'): number {
+export function ensureTailscaleStateDirs(
+  profile: MihomoProfile,
+  profileId = 'default',
+  diffWorkDir = false
+): number {
   let added = 0
 
-  tailscaleProxies(profile).forEach((proxy) => {
+  tailscaleProxies(profile).forEach(({ proxy, scope }) => {
     const stateDir = proxy['state-dir']
     if (typeof stateDir === 'string' && stateDir.trim()) return
 
-    proxy['state-dir'] = stateDirectoryForName(proxy.name, profileId)
+    proxy['state-dir'] = stateDirectoryForProxy(proxy.name, profileId, scope, diffWorkDir)
     added += 1
   })
 
@@ -42,7 +70,7 @@ export function ensureTailscaleStateDirs(profile: MihomoProfile, profileId = 'de
 }
 
 export function containsTailscaleAuthKey(profile: MihomoProfile): boolean {
-  return tailscaleProxies(profile).some((proxy) => {
+  return tailscaleProxies(profile).some(({ proxy }) => {
     const authKey = proxy['auth-key']
     return typeof authKey === 'string' && authKey.trim().length > 0
   })

@@ -150,7 +150,11 @@ export async function generateProfile(
   }
 
   const profile = deepMerge(currentProfile, controledMihomoConfig)
-  const addedTailscaleStateDirs = ensureTailscaleStateDirs(profile, current || 'default')
+  const addedTailscaleStateDirs = ensureTailscaleStateDirs(
+    profile,
+    current || 'default',
+    diffWorkDir
+  )
   if (addedTailscaleStateDirs > 0) {
     factoryLogger.info('Assigned stable state directories to Tailscale proxies', {
       count: addedTailscaleStateDirs

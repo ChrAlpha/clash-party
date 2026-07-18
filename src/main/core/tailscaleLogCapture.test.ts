@@ -110,4 +110,40 @@ describe('TailscaleLogCapture', () => {
     expect(dependencies.patchRuntimeLogLevel).toHaveBeenCalledTimes(3)
     expect(dependencies.restartLogStream).toHaveBeenLastCalledWith()
   })
+
+  it('cancels an active restore window', async () => {
+    vi.useFakeTimers()
+    const dependencies = createDependencies('warning')
+    const capture = new TailscaleLogCapture(dependencies, 45_000)
+
+    await capture.enable()
+    capture.cancel()
+    await vi.advanceTimersByTimeAsync(45_000)
+
+    expect(dependencies.patchRuntimeLogLevel).toHaveBeenCalledOnce()
+    expect(dependencies.restartLogStream).toHaveBeenCalledOnce()
+  })
+
+  it('supersedes an in-flight enable and permits a fresh capture', async () => {
+    let resolveFirstPatch: (() => void) | undefined
+    const firstPatch = new Promise<void>((resolve) => {
+      resolveFirstPatch = resolve
+    })
+    const dependencies = createDependencies('warning')
+    dependencies.patchRuntimeLogLevel.mockImplementationOnce(async () => firstPatch)
+    const capture = new TailscaleLogCapture(dependencies, 45_000)
+
+    const firstEnable = capture.enable()
+    await vi.waitFor(() => expect(dependencies.patchRuntimeLogLevel).toHaveBeenCalledOnce())
+    capture.cancel()
+    const secondEnable = capture.enable()
+
+    expect(secondEnable).not.toBe(firstEnable)
+    resolveFirstPatch?.()
+    await Promise.all([firstEnable, secondEnable])
+
+    expect(dependencies.patchRuntimeLogLevel).toHaveBeenCalledTimes(2)
+    expect(dependencies.restartLogStream).toHaveBeenCalledOnce()
+    expect(dependencies.restartLogStream).toHaveBeenCalledWith('info')
+  })
 })

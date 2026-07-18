@@ -49,6 +49,16 @@ export class TailscaleLogCapture {
     return operation
   }
 
+  cancel(): void {
+    this.generation += 1
+    if (this.restoreTimer) {
+      clearTimeout(this.restoreTimer)
+      this.restoreTimer = undefined
+    }
+    this.active = false
+    this.pendingEnable = undefined
+  }
+
   private async enableCapture(generation: number): Promise<void> {
     const configuredLevel = await this.dependencies.getConfiguredLogLevel()
     if (generation !== this.generation) return
@@ -66,9 +76,9 @@ export class TailscaleLogCapture {
     }
 
     await this.dependencies.patchRuntimeLogLevel('info')
+    if (generation !== this.generation) return
     this.active = true
     try {
-      if (generation !== this.generation) return
       await this.dependencies.restartLogStream('info')
     } finally {
       if (generation === this.generation && this.active) {

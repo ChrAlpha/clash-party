@@ -197,6 +197,7 @@ function waitForWebSocketOpen(ws: WebSocket): Promise<void> {
 
     const timeout = setTimeout(() => {
       rejectWith(new Error('Timed out waiting for the Mihomo log stream'))
+      if (ws.readyState === WebSocket.CONNECTING) ws.terminate()
     }, LOG_STREAM_READY_TIMEOUT_MS)
     timeout.unref()
     ws.once('open', handleOpen)
@@ -587,6 +588,7 @@ const restartMihomoLogsForTailscale = async (logLevelOverride?: LogLevel): Promi
 }
 
 export const stopMihomoLogs = (): void => {
+  tailscaleLogCapture.cancel()
   logsStreamLevelOverride = undefined
   stopStream(logsStream)
 }
@@ -666,6 +668,7 @@ export const mihomoInitializeTailscale = async (
     await tailscaleLogCapture.enable()
   } catch (error) {
     mihomoApiLogger.warn('Failed to prepare Tailscale login log capture', error)
+    throw error
   }
 
   return await mihomoProxyDelay(proxy, url, provider)

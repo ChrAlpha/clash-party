@@ -32,6 +32,11 @@ interface IpcApi {
   mihomoUpgrade: () => Promise<void>
   mihomoUpgradeUI: () => Promise<void>
   mihomoProxyDelay: (proxy: string, url?: string, provider?: string) => Promise<IMihomoDelay>
+  mihomoInitializeTailscale: (
+    proxy: string,
+    url?: string,
+    provider?: string
+  ) => Promise<IMihomoDelay>
   mihomoGroupDelay: (group: string, url?: string) => Promise<IMihomoGroupDelay>
   patchMihomoConfig: (patch: Partial<IMihomoConfig>) => Promise<void>
   mihomoSmartGroupWeights: (groupName: string) => Promise<Record<string, number>>
@@ -199,6 +204,7 @@ export const {
   mihomoUpgrade,
   mihomoUpgradeUI,
   mihomoProxyDelay,
+  mihomoInitializeTailscale,
   mihomoGroupDelay,
   patchMihomoConfig,
   mihomoSmartGroupWeights,

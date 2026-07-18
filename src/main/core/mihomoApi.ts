@@ -10,6 +10,7 @@ import { createLogger } from '../utils/logger'
 import { mihomoWorkConfigPath } from '../utils/dirs'
 import { generateProfile, getRuntimeConfig } from './factory'
 import { getMihomoIpcPath } from './manager'
+import { TailscaleLogCapture } from './tailscaleLogCapture'
 
 const mihomoApiLogger = createLogger('MihomoApi')
 
@@ -18,6 +19,9 @@ let currentIpcPath: string = ''
 
 const MAX_RETRY = 10
 const RECONNECT_INTERVAL_MS = 1000
+const LOG_STREAM_READY_TIMEOUT_MS = 5000
+const TAILSCALE_LOG_CAPTURE_DURATION_MS = 45_000
+const webSocketReadyCancellations = new WeakMap<WebSocket, (reason: Error) => void>()
 
 interface MihomoStreamState {
   ws: WebSocket | null
@@ -48,6 +52,7 @@ const logsStream: MihomoStreamState = {
   generation: 0,
   reconnectTimer: null
 }
+let logsStreamLevelOverride: LogLevel | undefined
 const connectionsStream: MihomoStreamState = {
   ws: null,
   retry: MAX_RETRY,
@@ -63,6 +68,7 @@ function clearStreamReconnect(stream: MihomoStreamState): void {
 }
 
 function disposeStreamSocket(ws: WebSocket): void {
+  webSocketReadyCancellations.get(ws)?.(new Error('Mihomo stream start was superseded'))
   ws.onmessage = null
   ws.onclose = null
   ws.onerror = null
@@ -161,6 +167,43 @@ function createMihomoWebSocket(endpoint: string): {
     ipcPath,
     wsUrl
   }
+}
+
+function waitForWebSocketOpen(ws: WebSocket): Promise<void> {
+  if (ws.readyState === WebSocket.OPEN) return Promise.resolve()
+
+  return new Promise((resolve, reject) => {
+    const cleanup = (): void => {
+      clearTimeout(timeout)
+      ws.off('open', handleOpen)
+      ws.off('error', handleError)
+      ws.off('close', handleClose)
+      webSocketReadyCancellations.delete(ws)
+    }
+    const rejectWith = (error: Error): void => {
+      cleanup()
+      reject(error)
+    }
+    const handleOpen = (): void => {
+      cleanup()
+      resolve()
+    }
+    const handleError = (error: Error): void => {
+      rejectWith(error)
+    }
+    const handleClose = (): void => {
+      rejectWith(new Error('Mihomo log stream closed before it was ready'))
+    }
+
+    const timeout = setTimeout(() => {
+      rejectWith(new Error('Timed out waiting for the Mihomo log stream'))
+    }, LOG_STREAM_READY_TIMEOUT_MS)
+    timeout.unref()
+    ws.once('open', handleOpen)
+    ws.once('error', handleError)
+    ws.once('close', handleClose)
+    webSocketReadyCancellations.set(ws, rejectWith)
+  })
 }
 
 export const getAxios = async (force: boolean = false): Promise<AxiosInstance> => {
@@ -537,15 +580,33 @@ export const startMihomoLogs = async (): Promise<void> => {
   await mihomoLogs()
 }
 
+const restartMihomoLogsForTailscale = async (logLevelOverride?: LogLevel): Promise<void> => {
+  logsStreamLevelOverride = logLevelOverride
+  activateStream(logsStream)
+  await mihomoLogs(true)
+}
+
 export const stopMihomoLogs = (): void => {
+  logsStreamLevelOverride = undefined
   stopStream(logsStream)
 }
 
-const mihomoLogs = async (): Promise<void> => {
+const mihomoLogs = async (waitForOpen: boolean = false): Promise<void> => {
   const generation = beginStreamConnection(logsStream)
   if (generation === null) return
 
-  const { 'log-level': logLevel = 'info' } = await getControledMihomoConfig()
+  let logLevel = logsStreamLevelOverride
+  if (!logLevel) {
+    const config = await getControledMihomoConfig()
+    logLevel = config['log-level'] ?? 'info'
+  }
+
+  if (!isCurrentStream(logsStream, generation)) {
+    if (waitForOpen) {
+      throw new Error('Mihomo log stream start was superseded')
+    }
+    return
+  }
 
   const { ws } = createMihomoWebSocket(`/logs?level=${logLevel}`)
   logsStream.ws = ws
@@ -571,6 +632,43 @@ const mihomoLogs = async (): Promise<void> => {
   ws.onerror = (): void => {
     closeErroredStreamSocket(logsStream, generation, ws)
   }
+
+  if (waitForOpen) {
+    await waitForWebSocketOpen(ws)
+  }
+}
+
+const tailscaleLogCapture = new TailscaleLogCapture(
+  {
+    getConfiguredLogLevel: async () => {
+      const config = await getControledMihomoConfig()
+      return config['log-level'] ?? 'info'
+    },
+    patchRuntimeLogLevel: async (level) => {
+      await patchMihomoConfig({ 'log-level': level })
+    },
+    restartLogStream: async (level) => {
+      await restartMihomoLogsForTailscale(level)
+    },
+    onRestoreError: (error) => {
+      mihomoApiLogger.warn('Failed to restore log level after Tailscale login capture', error)
+    }
+  },
+  TAILSCALE_LOG_CAPTURE_DURATION_MS
+)
+
+export const mihomoInitializeTailscale = async (
+  proxy: string,
+  url?: string,
+  provider?: string
+): Promise<IMihomoDelay> => {
+  try {
+    await tailscaleLogCapture.enable()
+  } catch (error) {
+    mihomoApiLogger.warn('Failed to prepare Tailscale login log capture', error)
+  }
+
+  return await mihomoProxyDelay(proxy, url, provider)
 }
 
 export const startMihomoConnections = async (): Promise<void> => {

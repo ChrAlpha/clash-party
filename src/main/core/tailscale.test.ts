@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { containsTailscaleAuthKey, ensureTailscaleStateDirs } from './tailscale'
 import { extractTailscaleLogin } from '../../shared/tailscale'
+import { containsTailscaleAuthKey, ensureTailscaleStateDirs } from './tailscale'
 
 describe('ensureTailscaleStateDirs', () => {
   it('assigns a stable unique state directory to each Tailscale proxy', () => {

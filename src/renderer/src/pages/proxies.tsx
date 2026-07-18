@@ -5,6 +5,7 @@ import {
   getImageDataURL,
   mihomoChangeProxy,
   mihomoCloseAllConnections,
+  mihomoInitializeTailscale,
   mihomoProxyDelay
 } from '@renderer/utils/ipc'
 import { CgDetailsLess, CgDetailsMore } from 'react-icons/cg'
@@ -197,6 +198,9 @@ const Proxies: React.FC = () => {
 
   const onProxyDelay = useCallback(
     async (proxy: IMihomoProxy | IMihomoGroup, url?: string): Promise<IMihomoDelay> => {
+      if (proxy.type === 'Tailscale') {
+        return await mihomoInitializeTailscale(proxy.name, url, getProviderName(proxy))
+      }
       return await mihomoProxyDelay(proxy.name, url, getProviderName(proxy))
     },
     []
@@ -306,7 +310,7 @@ const Proxies: React.FC = () => {
         const promise = Promise.resolve().then(async () => {
           let res: IMihomoDelay | undefined
           try {
-            res = await mihomoProxyDelay(proxy.name, groups[index].testUrl, getProviderName(proxy))
+            res = await onProxyDelay(proxy, groups[index].testUrl)
           } catch {
             // ignore
           }
@@ -346,6 +350,7 @@ const Proxies: React.FC = () => {
       allProxies,
       groups,
       delayTestConcurrency,
+      onProxyDelay,
       scheduleFlushDelayResults,
       flushDelayResults,
       setIsOpen

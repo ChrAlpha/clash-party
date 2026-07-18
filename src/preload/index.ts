@@ -20,6 +20,7 @@ const validInvokeChannels = [
   'mihomoUpgrade',
   'mihomoUpgradeUI',
   'mihomoProxyDelay',
+  'mihomoInitializeTailscale',
   'mihomoGroupDelay',
   'patchMihomoConfig',
   'mihomoSmartGroupWeights',

@@ -1,10 +1,5 @@
 import type { TailscaleLogin } from '../../../../shared/tailscale'
 
-interface RecentLogin {
-  login: TailscaleLogin
-  seenAt: number
-}
-
 const MAX_REQUESTS = 5
 const MAX_CACHE_ENTRIES = 100
 
@@ -17,17 +12,18 @@ function sameLogin(first: TailscaleLogin, second: TailscaleLogin): boolean {
 }
 
 export class TailscaleLoginQueue {
-  static readonly cacheTtlMs = 5 * 60 * 1000
+  static readonly deduplicationTtlMs = 5 * 60 * 1000
 
   private readonly lastPromptedAt = new Map<string, number>()
-  private readonly recentLoginsByProxy = new Map<string, RecentLogin>()
   private requests: TailscaleLogin[] = []
 
   record(login: TailscaleLogin, now = Date.now()): TailscaleLogin[] {
-    this.rememberRecent(login, now)
     const key = loginKey(login)
     this.pruneLastPrompted(now)
-    if (now - (this.lastPromptedAt.get(key) ?? -Infinity) < TailscaleLoginQueue.cacheTtlMs) {
+    if (
+      now - (this.lastPromptedAt.get(key) ?? -Infinity) <
+      TailscaleLoginQueue.deduplicationTtlMs
+    ) {
       return this.snapshot()
     }
     if (this.requests.some((request) => sameLogin(request, login))) return this.snapshot()
@@ -38,21 +34,21 @@ export class TailscaleLoginQueue {
     return this.snapshot()
   }
 
-  replay(proxyName: string, now = Date.now()): TailscaleLogin[] {
-    this.pruneRecent(now)
-    const recent = this.recentLoginsByProxy.get(proxyName)
-    if (!recent) return this.snapshot()
-
-    const key = loginKey(recent.login)
+  replay(login: TailscaleLogin, now = Date.now()): TailscaleLogin[] {
+    const key = loginKey(login)
     this.rememberPrompted(key, now)
-    if (this.requests.some((request) => sameLogin(request, recent.login))) {
+    if (this.requests.some((request) => sameLogin(request, login))) {
       return this.snapshot()
     }
 
-    this.requests =
-      this.requests.length >= MAX_REQUESTS
-        ? [this.requests[0], recent.login, ...this.requests.slice(1, MAX_REQUESTS - 1)]
-        : [...this.requests, recent.login]
+    const [current, ...remaining] = this.requests
+    this.requests = current ? [current, login, ...remaining].slice(0, MAX_REQUESTS) : [login]
+    return this.snapshot()
+  }
+
+  clear(): TailscaleLogin[] {
+    this.requests = []
+    this.lastPromptedAt.clear()
     return this.snapshot()
   }
 
@@ -67,24 +63,9 @@ export class TailscaleLoginQueue {
     return this.closeCurrent(now)
   }
 
-  private rememberRecent(login: TailscaleLogin, now: number): void {
-    this.pruneRecent(now)
-    this.recentLoginsByProxy.delete(login.proxyName)
-    this.recentLoginsByProxy.set(login.proxyName, { login, seenAt: now })
-    this.trimMap(this.recentLoginsByProxy)
-  }
-
-  private pruneRecent(now: number): void {
-    this.recentLoginsByProxy.forEach(({ seenAt }, proxyName) => {
-      if (now - seenAt >= TailscaleLoginQueue.cacheTtlMs) {
-        this.recentLoginsByProxy.delete(proxyName)
-      }
-    })
-  }
-
   private pruneLastPrompted(now: number): void {
     this.lastPromptedAt.forEach((promptedAt, key) => {
-      if (now - promptedAt >= TailscaleLoginQueue.cacheTtlMs) {
+      if (now - promptedAt >= TailscaleLoginQueue.deduplicationTtlMs) {
         this.lastPromptedAt.delete(key)
       }
     })

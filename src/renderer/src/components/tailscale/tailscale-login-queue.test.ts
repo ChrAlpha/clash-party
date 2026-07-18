@@ -30,7 +30,7 @@ describe('TailscaleLoginQueue', () => {
       queue.record(login(proxyName), 0)
     }
 
-    const requests = queue.replay('six', 1)
+    const requests = queue.replay(login('six'), 1)
 
     expect(requests.map(({ proxyName }) => proxyName)).toEqual([
       'one',
@@ -47,7 +47,7 @@ describe('TailscaleLoginQueue', () => {
     queue.record(request, 0)
     expect(queue.closeCurrent(1)).toEqual([])
 
-    expect(queue.replay('home', 2)).toEqual([request])
+    expect(queue.replay(request, 2)).toEqual([request])
     expect(queue.record(request, 3)).toEqual([request])
   })
 
@@ -55,17 +55,18 @@ describe('TailscaleLoginQueue', () => {
     const queue = new TailscaleLoginQueue()
     const request = login('home')
     queue.record(request, 0)
-    queue.closeCurrent(TailscaleLoginQueue.cacheTtlMs - 1)
+    queue.closeCurrent(TailscaleLoginQueue.deduplicationTtlMs - 1)
 
-    expect(queue.record(request, TailscaleLoginQueue.cacheTtlMs)).toEqual([])
+    expect(queue.record(request, TailscaleLoginQueue.deduplicationTtlMs)).toEqual([])
   })
 
-  it('does not replay an expired prompt', () => {
+  it('clears requests and deduplication state on a core generation change', () => {
     const queue = new TailscaleLoginQueue()
-    queue.record(login('home'), 0)
-    queue.closeCurrent(1)
+    const request = login('home')
+    queue.record(request, 0)
 
-    expect(queue.replay('home', TailscaleLoginQueue.cacheTtlMs)).toEqual([])
+    expect(queue.clear()).toEqual([])
+    expect(queue.record(request, 1)).toEqual([request])
   })
 
   it('keeps a prompt recoverable after the user opens it', () => {
@@ -74,6 +75,6 @@ describe('TailscaleLoginQueue', () => {
     queue.record(request, 0)
 
     expect(queue.openCurrent(1)).toEqual([])
-    expect(queue.replay('home', 2)).toEqual([request])
+    expect(queue.replay(request, 2)).toEqual([request])
   })
 })

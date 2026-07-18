@@ -186,6 +186,25 @@ const Proxies: React.FC = () => {
     appConfig?.hideUnavailableProxies
   ])
 
+  const replayableTailscaleProxyNames = useMemo(() => {
+    const identitiesByName = new Map<string, Set<string>>()
+    for (const group of groups) {
+      for (const proxy of group.all) {
+        if (!proxy || proxy.type !== 'Tailscale') continue
+        const identities = identitiesByName.get(proxy.name) ?? new Set<string>()
+        const providerName = getProviderName(proxy)
+        identities.add(providerName === undefined ? 'direct' : `provider:${providerName}`)
+        identitiesByName.set(proxy.name, identities)
+      }
+    }
+
+    return new Set(
+      [...identitiesByName.entries()]
+        .filter(([, identities]) => identities.size === 1)
+        .map(([name]) => name)
+    )
+  }, [groups])
+
   const onChangeProxy = useCallback(
     async (group: string, proxy: string): Promise<void> => {
       await mihomoChangeProxy(group, proxy)
@@ -204,7 +223,7 @@ const Proxies: React.FC = () => {
       replayCachedLogin = true
     ): Promise<IMihomoDelay> => {
       if (proxy.type === 'Tailscale') {
-        if (replayCachedLogin) {
+        if (replayCachedLogin && replayableTailscaleProxyNames.has(proxy.name)) {
           window.dispatchEvent(
             new CustomEvent<string>(TAILSCALE_INITIALIZE_REQUEST_EVENT, {
               detail: proxy.name
@@ -215,7 +234,7 @@ const Proxies: React.FC = () => {
       }
       return await mihomoProxyDelay(proxy.name, url, getProviderName(proxy))
     },
-    []
+    [replayableTailscaleProxyNames]
   )
 
   // 组测速时逐节点写回会造成 O(N²) 分配与 N 次 allProxies 重算

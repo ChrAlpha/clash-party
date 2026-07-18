@@ -1,4 +1,5 @@
 import { Button, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from '@heroui/react'
+import { mihomoTailscaleLogins } from '@renderer/utils/ipc'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -7,6 +8,12 @@ import {
   type TailscaleLogin
 } from '../../../../shared/tailscale'
 import { TailscaleLoginQueue } from './tailscale-login-queue'
+
+function isTailscaleLogin(value: unknown): value is TailscaleLogin {
+  if (!value || typeof value !== 'object') return false
+  const login = value as Partial<TailscaleLogin>
+  return typeof login.proxyName === 'string' && typeof login.url === 'string'
+}
 
 const TailscaleLoginPrompt: React.FC = () => {
   const { t } = useTranslation()
@@ -19,6 +26,9 @@ const TailscaleLoginPrompt: React.FC = () => {
   }, [])
 
   useEffect(() => {
+    let active = true
+    let cacheGeneration = 0
+
     const onLog = (_event: unknown, ...args: unknown[]): void => {
       const log = args[0] as Partial<IMihomoLogInfo> | undefined
       if (typeof log?.payload !== 'string') return
@@ -31,13 +41,46 @@ const TailscaleLoginPrompt: React.FC = () => {
     const onInitializeRequest = (event: Event): void => {
       const proxyName = (event as CustomEvent<unknown>).detail
       if (typeof proxyName !== 'string') return
-      setRequests(queue.current.replay(proxyName))
+
+      const requestGeneration = cacheGeneration
+      void mihomoTailscaleLogins()
+        .then((logins) => {
+          if (!active || cacheGeneration !== requestGeneration) return
+          const matchingLogins = logins.filter(
+            (login) => isTailscaleLogin(login) && login.proxyName === proxyName
+          )
+          if (matchingLogins.length === 1) {
+            setRequests(queue.current.replay(matchingLogins[0]))
+          }
+        })
+        .catch(() => {})
+    }
+
+    const onCacheCleared = (): void => {
+      cacheGeneration += 1
+      setRequests(queue.current.clear())
     }
 
     window.electron.ipcRenderer.on('mihomoLogs', onLog)
+    window.electron.ipcRenderer.on('tailscaleLoginCacheCleared', onCacheCleared)
     window.addEventListener(TAILSCALE_INITIALIZE_REQUEST_EVENT, onInitializeRequest)
+
+    const hydrationGeneration = cacheGeneration
+    void mihomoTailscaleLogins()
+      .then((logins) => {
+        if (!active || cacheGeneration !== hydrationGeneration) return
+        let nextRequests: TailscaleLogin[] | undefined
+        for (const login of logins) {
+          if (isTailscaleLogin(login)) nextRequests = queue.current.record(login)
+        }
+        if (nextRequests) setRequests(nextRequests)
+      })
+      .catch(() => {})
+
     return (): void => {
+      active = false
       window.electron.ipcRenderer.removeListener('mihomoLogs', onLog)
+      window.electron.ipcRenderer.removeListener('tailscaleLoginCacheCleared', onCacheCleared)
       window.removeEventListener(TAILSCALE_INITIALIZE_REQUEST_EVENT, onInitializeRequest)
     }
   }, [])

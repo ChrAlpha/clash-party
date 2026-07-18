@@ -1,18 +1,21 @@
 import { Button, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from '@heroui/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { extractTailscaleLogin, type TailscaleLogin } from '../../../../shared/tailscale'
-
-const PROMPT_DEDUPLICATION_MS = 5 * 60 * 1000
+import {
+  extractTailscaleLogin,
+  TAILSCALE_INITIALIZE_REQUEST_EVENT,
+  type TailscaleLogin
+} from '../../../../shared/tailscale'
+import { TailscaleLoginQueue } from './tailscale-login-queue'
 
 const TailscaleLoginPrompt: React.FC = () => {
   const { t } = useTranslation()
+  const queue = useRef(new TailscaleLoginQueue())
   const [requests, setRequests] = useState<TailscaleLogin[]>([])
-  const lastPromptedAt = useRef(new Map<string, number>())
   const request = requests[0]
 
   const closeCurrent = useCallback((): void => {
-    setRequests((current) => current.slice(1))
+    setRequests(queue.current.closeCurrent())
   }, [])
 
   useEffect(() => {
@@ -22,31 +25,20 @@ const TailscaleLoginPrompt: React.FC = () => {
 
       const login = extractTailscaleLogin(log.payload)
       if (!login) return
+      setRequests(queue.current.record(login))
+    }
 
-      const key = `${login.proxyName}\0${login.url}`
-      const now = Date.now()
-      if (lastPromptedAt.current.size >= 100) {
-        lastPromptedAt.current.forEach((timestamp, promptKey) => {
-          if (now - timestamp >= PROMPT_DEDUPLICATION_MS) {
-            lastPromptedAt.current.delete(promptKey)
-          }
-        })
-      }
-      if (lastPromptedAt.current.size >= 100) return
-      if (now - (lastPromptedAt.current.get(key) || 0) < PROMPT_DEDUPLICATION_MS) return
-
-      lastPromptedAt.current.set(key, now)
-      setRequests((current) => {
-        if (current.some((item) => item.proxyName === login.proxyName && item.url === login.url)) {
-          return current
-        }
-        return [...current.slice(-4), login]
-      })
+    const onInitializeRequest = (event: Event): void => {
+      const proxyName = (event as CustomEvent<unknown>).detail
+      if (typeof proxyName !== 'string') return
+      setRequests(queue.current.replay(proxyName))
     }
 
     window.electron.ipcRenderer.on('mihomoLogs', onLog)
+    window.addEventListener(TAILSCALE_INITIALIZE_REQUEST_EVENT, onInitializeRequest)
     return (): void => {
       window.electron.ipcRenderer.removeListener('mihomoLogs', onLog)
+      window.removeEventListener(TAILSCALE_INITIALIZE_REQUEST_EVENT, onInitializeRequest)
     }
   }, [])
 
@@ -71,7 +63,7 @@ const TailscaleLoginPrompt: React.FC = () => {
                 color="primary"
                 onPress={() => {
                   window.open(request.url, '_blank', 'noopener,noreferrer')
-                  closeCurrent()
+                  setRequests(queue.current.openCurrent())
                 }}
               >
                 {t('tailscale.login.open')}

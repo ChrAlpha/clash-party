@@ -22,6 +22,7 @@ import CollapseInput from '@renderer/components/base/collapse-input'
 import { includesIgnoreCase } from '@renderer/utils/includes'
 import { useControledMihomoConfig } from '@renderer/hooks/use-controled-mihomo-config'
 import { useTranslation } from 'react-i18next'
+import { TAILSCALE_INITIALIZE_REQUEST_EVENT } from '../../../shared/tailscale'
 
 const GROUP_EXPAND_STATE_KEY = 'proxy_group_expand_state'
 
@@ -197,8 +198,19 @@ const Proxies: React.FC = () => {
   )
 
   const onProxyDelay = useCallback(
-    async (proxy: IMihomoProxy | IMihomoGroup, url?: string): Promise<IMihomoDelay> => {
+    async (
+      proxy: IMihomoProxy | IMihomoGroup,
+      url?: string,
+      replayCachedLogin = true
+    ): Promise<IMihomoDelay> => {
       if (proxy.type === 'Tailscale') {
+        if (replayCachedLogin) {
+          window.dispatchEvent(
+            new CustomEvent<string>(TAILSCALE_INITIALIZE_REQUEST_EVENT, {
+              detail: proxy.name
+            })
+          )
+        }
         return await mihomoInitializeTailscale(proxy.name, url, getProviderName(proxy))
       }
       return await mihomoProxyDelay(proxy.name, url, getProviderName(proxy))
@@ -310,7 +322,7 @@ const Proxies: React.FC = () => {
         const promise = Promise.resolve().then(async () => {
           let res: IMihomoDelay | undefined
           try {
-            res = await onProxyDelay(proxy, groups[index].testUrl)
+            res = await onProxyDelay(proxy, groups[index].testUrl, false)
           } catch {
             // ignore
           }

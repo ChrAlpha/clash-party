@@ -3,6 +3,8 @@ export interface TailscaleLogin {
   url: string
 }
 
+export const TAILSCALE_INITIALIZE_REQUEST_EVENT = 'tailscale-initialize-request'
+
 function trimUrlPunctuation(value: string): string {
   return value.replace(/[.,;!\])}]+$/u, '')
 }

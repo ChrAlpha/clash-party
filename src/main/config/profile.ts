@@ -62,9 +62,25 @@ async function canRemoveProfileWorkDir(workDir: string): Promise<boolean> {
   }
 }
 
-async function removeProfileWorkDirWithPkexec(workDir: string): Promise<void> {
+async function removeProfileWorkDirWithPrivileges(workDir: string): Promise<void> {
   assertInsideWorkDir(workDir)
-  await execFilePromise('pkexec', ['rm', '-rf', '--', workDir])
+  if (process.platform === 'linux') {
+    await execFilePromise('pkexec', ['rm', '-rf', '--', workDir])
+    return
+  }
+  if (process.platform === 'darwin') {
+    await execFilePromise('osascript', [
+      '-e',
+      'on run argv',
+      '-e',
+      'do shell script ("/bin/rm -rf -- " & quoted form of (item 1 of argv)) with administrator privileges',
+      '-e',
+      'end run',
+      workDir
+    ])
+    return
+  }
+  throw new Error(`Unsupported privileged profile cleanup platform: ${process.platform}`)
 }
 
 async function removeProfileWorkDir(id: string): Promise<void> {
@@ -72,19 +88,19 @@ async function removeProfileWorkDir(id: string): Promise<void> {
   if (!existsSync(workDir)) return
   assertInsideWorkDir(workDir)
 
-  if (process.platform === 'linux' && !(await canRemoveProfileWorkDir(workDir))) {
-    await removeProfileWorkDirWithPkexec(workDir)
+  if (['darwin', 'linux'].includes(process.platform) && !(await canRemoveProfileWorkDir(workDir))) {
+    await removeProfileWorkDirWithPrivileges(workDir)
     return
   }
 
   try {
     await rm(workDir, { recursive: true, force: true })
   } catch (error) {
-    if (process.platform !== 'linux' || !isPermissionError(error)) {
+    if (!['darwin', 'linux'].includes(process.platform) || !isPermissionError(error)) {
       throw error
     }
 
-    await removeProfileWorkDirWithPkexec(workDir)
+    await removeProfileWorkDirWithPrivileges(workDir)
   }
 }
 

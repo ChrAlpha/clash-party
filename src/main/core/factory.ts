@@ -155,9 +155,18 @@ export async function generateProfile(
     current || 'default',
     diffWorkDir
   )
-  if (addedTailscaleStateDirs > 0) {
+  if (addedTailscaleStateDirs.length > 0) {
+    const tailscaleStateRoot = path.join(mihomoProfileWorkDir(current), 'tailscale')
+    await Promise.all(
+      addedTailscaleStateDirs.map(async (stateDir) => {
+        await mkdir(path.join(tailscaleStateRoot, path.posix.basename(stateDir)), {
+          recursive: true,
+          mode: 0o700
+        })
+      })
+    )
     factoryLogger.info('Assigned stable state directories to Tailscale proxies', {
-      count: addedTailscaleStateDirs
+      count: addedTailscaleStateDirs.length
     })
   }
   // 关闭 DNS 覆写时，如果最终配置没有启用的 DNS 配置，清空 dns-hijack 避免请求被劫持但无法处理

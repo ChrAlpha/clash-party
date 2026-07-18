@@ -55,15 +55,16 @@ export function ensureTailscaleStateDirs(
   profile: MihomoProfile,
   profileId = 'default',
   diffWorkDir = false
-): number {
-  let added = 0
+): string[] {
+  const added: string[] = []
 
   tailscaleProxies(profile).forEach(({ proxy, scope }) => {
-    const stateDir = proxy['state-dir']
-    if (typeof stateDir === 'string' && stateDir.trim()) return
+    const existingStateDir = proxy['state-dir']
+    if (typeof existingStateDir === 'string' && existingStateDir.trim()) return
 
-    proxy['state-dir'] = stateDirectoryForProxy(proxy.name, profileId, scope, diffWorkDir)
-    added += 1
+    const stateDir = stateDirectoryForProxy(proxy.name, profileId, scope, diffWorkDir)
+    proxy['state-dir'] = stateDir
+    added.push(stateDir)
   })
 
   return added

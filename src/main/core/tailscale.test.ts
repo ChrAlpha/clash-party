@@ -11,16 +11,18 @@ describe('ensureTailscaleStateDirs', () => {
     ]
     const profile = { proxies }
 
-    expect(ensureTailscaleStateDirs(profile)).toBe(2)
+    const addedStateDirs = ensureTailscaleStateDirs(profile)
+    expect(addedStateDirs).toHaveLength(2)
 
     const [home, work, regular] = profile.proxies
     expect(home['state-dir']).toMatch(/^default\/tailscale\/[a-f0-9]{16}$/)
     expect(work['state-dir']).toMatch(/^default\/tailscale\/[a-f0-9]{16}$/)
     expect(home['state-dir']).not.toBe(work['state-dir'])
+    expect(addedStateDirs).toEqual([home['state-dir'], work['state-dir']])
     expect(regular).not.toHaveProperty('state-dir')
 
     const originalDirectories = [home['state-dir'], work['state-dir']]
-    expect(ensureTailscaleStateDirs(profile)).toBe(0)
+    expect(ensureTailscaleStateDirs(profile)).toEqual([])
     expect([home['state-dir'], work['state-dir']]).toEqual(originalDirectories)
   })
 
@@ -35,7 +37,7 @@ describe('ensureTailscaleStateDirs', () => {
     }
     const profile = { proxies: [proxy] }
 
-    expect(ensureTailscaleStateDirs(profile)).toBe(0)
+    expect(ensureTailscaleStateDirs(profile)).toEqual([])
     expect(proxy).toEqual({
       name: 'tailnet',
       type: 'tailscale',
@@ -95,7 +97,7 @@ describe('ensureTailscaleStateDirs', () => {
       }
     }
 
-    expect(ensureTailscaleStateDirs(profile, 'profile-a')).toBe(2)
+    expect(ensureTailscaleStateDirs(profile, 'profile-a')).toHaveLength(2)
     expect(directProxy['state-dir']).toMatch(/^profile-a\/tailscale\/[a-f0-9]{16}$/)
     expect(inlineProxy['state-dir']).toMatch(/^profile-a\/tailscale\/[a-f0-9]{16}$/)
     expect(directProxy['state-dir']).not.toBe(inlineProxy['state-dir'])

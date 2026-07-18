@@ -64,13 +64,6 @@ export class TailscaleLoginQueue {
   }
 
   openCurrent(now = Date.now()): TailscaleLogin[] {
-    const current = this.requests[0]
-    if (current) {
-      const recent = this.recentLoginsByProxy.get(current.proxyName)
-      if (recent && sameLogin(recent.login, current)) {
-        this.recentLoginsByProxy.delete(current.proxyName)
-      }
-    }
     return this.closeCurrent(now)
   }
 

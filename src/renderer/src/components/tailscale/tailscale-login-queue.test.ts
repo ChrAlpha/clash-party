@@ -68,12 +68,12 @@ describe('TailscaleLoginQueue', () => {
     expect(queue.replay('home', TailscaleLoginQueue.cacheTtlMs)).toEqual([])
   })
 
-  it('forgets a prompt after the user opens it', () => {
+  it('keeps a prompt recoverable after the user opens it', () => {
     const queue = new TailscaleLoginQueue()
     const request = login('home')
     queue.record(request, 0)
 
     expect(queue.openCurrent(1)).toEqual([])
-    expect(queue.replay('home', 2)).toEqual([])
+    expect(queue.replay('home', 2)).toEqual([request])
   })
 })

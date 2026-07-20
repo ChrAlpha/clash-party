@@ -1,4 +1,5 @@
 import { Button, Card, CardBody } from '@heroui/react'
+import { toast } from '@renderer/components/base/toast'
 import { mihomoUnfixedProxy } from '@renderer/utils/ipc'
 import React, { useMemo, useState, useCallback } from 'react'
 import { FaMapPin } from 'react-icons/fa6'
@@ -48,7 +49,13 @@ const ProxyItemBase: React.FC<Props> = (props) => {
   const isLoading = loading || isGroupTesting
 
   const delayText = useMemo(() => {
-    if (proxy.type === 'Tailscale' && delay === -1) return t('tailscale.initialize')
+    // A Tailscale node's first delay test almost always times out (interactive login can't
+    // complete within the 5s delay-test window), so delay===0 still means "not initialized yet"
+    // for this proxy type, not "dead node" - keep the actionable Initialize label instead of the
+    // generic Timeout text.
+    if (proxy.type === 'Tailscale' && (delay === -1 || delay === 0)) {
+      return t('tailscale.initialize')
+    }
     if (delay === -1) return t('proxies.delay.test')
     if (delay === 0) return t('proxies.delay.timeout')
     return delay.toString()
@@ -64,10 +71,19 @@ const ProxyItemBase: React.FC<Props> = (props) => {
 
   const onDelay = useCallback((): void => {
     setLoading(true)
-    onProxyDelay(proxy, group.testUrl).finally(() => {
-      mutateProxies()
-      setLoading(false)
-    })
+    onProxyDelay(proxy, group.testUrl)
+      .catch((e) => {
+        // mihomoInitializeTailscale (and, less commonly, mihomoProxyDelay) can reject outright
+        // (e.g. IPC/core error) rather than resolving with a timeout delay; without this handler
+        // that rejection was unhandled. The spinner is still stopped by finally().
+        // Rejections are often object-shaped (the axios interceptor rejects with response data),
+        // so surface a message string rather than a bare "[object Object]".
+        toast.error(String((e as { message?: string })?.message ?? e))
+      })
+      .finally(() => {
+        mutateProxies()
+        setLoading(false)
+      })
   }, [proxy, group.testUrl, onProxyDelay, mutateProxies])
 
   const fixed = useMemo(() => group.fixed && group.fixed === proxy.name, [group.fixed, proxy.name])

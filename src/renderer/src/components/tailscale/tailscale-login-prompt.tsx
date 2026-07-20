@@ -1,4 +1,5 @@
 import { Button, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from '@heroui/react'
+import { toast } from '@renderer/components/base/toast'
 import { mihomoTailscaleLogins } from '@renderer/utils/ipc'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -65,17 +66,16 @@ const TailscaleLoginPrompt: React.FC = () => {
     window.electron.ipcRenderer.on('tailscaleLoginCacheCleared', onCacheCleared)
     window.addEventListener(TAILSCALE_INITIALIZE_REQUEST_EVENT, onInitializeRequest)
 
-    const hydrationGeneration = cacheGeneration
-    void mihomoTailscaleLogins()
-      .then((logins) => {
-        if (!active || cacheGeneration !== hydrationGeneration) return
-        let nextRequests: TailscaleLogin[] | undefined
-        for (const login of logins) {
-          if (isTailscaleLogin(login)) nextRequests = queue.current.record(login)
-        }
-        if (nextRequests) setRequests(nextRequests)
-      })
-      .catch(() => {})
+    // Intentionally do NOT hydrate cached logins as active prompts on mount: the main-process
+    // cache can hold logins that were already completed or cancelled in a previous window
+    // instance (this queue's in-memory dismissal state does not survive a remount), so blindly
+    // record()-ing every cached login here used to burst up to 5 stale modals right after the
+    // main window was recreated. Cached logins stay available for replay only -
+    // via the explicit TAILSCALE_INITIALIZE_REQUEST_EVENT path above, which queries the cache
+    // fresh on demand (onInitializeRequest) - and a modal is otherwise only (re)opened from a
+    // genuinely fresh /logs line (onLog). Both paths go through TailscaleLoginQueue, so
+    // dismissed/suppressed logins are respected here too; the cacheGeneration guard above
+    // still protects onInitializeRequest/onCacheCleared against races with cache invalidation.
 
     return (): void => {
       active = false
@@ -84,6 +84,14 @@ const TailscaleLoginPrompt: React.FC = () => {
       window.removeEventListener(TAILSCALE_INITIALIZE_REQUEST_EVENT, onInitializeRequest)
     }
   }, [])
+
+  const onCopy = useCallback((): void => {
+    if (!request) return
+    navigator.clipboard
+      .writeText(request.url)
+      .then(() => toast.success(t('tailscale.login.copied')))
+      .catch(() => {})
+  }, [request, t])
 
   return (
     <Modal isOpen={Boolean(request)} onOpenChange={(open) => !open && closeCurrent()} size="lg">
@@ -97,16 +105,23 @@ const TailscaleLoginPrompt: React.FC = () => {
                 {request.url}
               </code>
               <p className="text-sm text-warning">{t('tailscale.login.security')}</p>
+              <p className="text-sm text-foreground-500">{t('tailscale.login.afterSignIn')}</p>
             </ModalBody>
             <ModalFooter>
               <Button variant="light" onPress={closeCurrent}>
                 {t('common.cancel')}
               </Button>
+              <Button variant="light" onPress={onCopy}>
+                {t('tailscale.login.copy')}
+              </Button>
               <Button
                 color="primary"
                 onPress={() => {
+                  // Keep the modal open after opening the link: the browser open
+                  // can silently fail (no default handler, popup blocked, etc.), so the user
+                  // must still be able to copy the URL or retry from here. Only Cancel (or the
+                  // modal's own close affordances, which route through closeCurrent) dismisses.
                   window.open(request.url, '_blank', 'noopener,noreferrer')
-                  setRequests(queue.current.openCurrent())
                 }}
               >
                 {t('tailscale.login.open')}

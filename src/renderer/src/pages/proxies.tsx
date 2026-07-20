@@ -20,6 +20,7 @@ import { IoIosArrowBack } from 'react-icons/io'
 import { useGroups } from '@renderer/hooks/use-groups'
 import CollapseInput from '@renderer/components/base/collapse-input'
 import { includesIgnoreCase } from '@renderer/utils/includes'
+import { shouldShowProxyWhenHidingUnavailable } from '@renderer/utils/proxy-filter'
 import { useControledMihomoConfig } from '@renderer/hooks/use-controled-mihomo-config'
 import { useTranslation } from 'react-i18next'
 import { TAILSCALE_INITIALIZE_REQUEST_EVENT } from '../../../shared/tailscale'
@@ -151,18 +152,8 @@ const Proxies: React.FC = () => {
           if (!includesIgnoreCase(proxy.name, searchValue[index])) {
             return false
           }
-          if (appConfig?.hideUnavailableProxies) {
-            const isGroup = 'all' in proxy
-            if (isGroup) {
-              return true
-            }
-            if (!proxy.history || proxy.history.length === 0) {
-              return true
-            }
-            const lastDelay = proxy.history[proxy.history.length - 1].delay
-            if (lastDelay === 0) {
-              return false
-            }
+          if (appConfig?.hideUnavailableProxies && !shouldShowProxyWhenHidingUnavailable(proxy)) {
+            return false
           }
           return true
         })
@@ -223,14 +214,24 @@ const Proxies: React.FC = () => {
       replayCachedLogin = true
     ): Promise<IMihomoDelay> => {
       if (proxy.type === 'Tailscale') {
-        if (replayCachedLogin && replayableTailscaleProxyNames.has(proxy.name)) {
+        const result = await mihomoInitializeTailscale(proxy.name, url, getProviderName(proxy))
+        // Only replay the cached login modal when the test actually failed/timed out - a
+        // successful delay means the user already finished signing in, so re-popping the
+        // (now dead) cached URL on every subsequent click would be a stale, pointless prompt
+        // Group delay tests pass replayCachedLogin=false and never reach here.
+        const delay = result.delay ?? 0
+        if (
+          replayCachedLogin &&
+          (delay === 0 || delay === -1) &&
+          replayableTailscaleProxyNames.has(proxy.name)
+        ) {
           window.dispatchEvent(
             new CustomEvent<string>(TAILSCALE_INITIALIZE_REQUEST_EVENT, {
               detail: proxy.name
             })
           )
         }
-        return await mihomoInitializeTailscale(proxy.name, url, getProviderName(proxy))
+        return result
       }
       return await mihomoProxyDelay(proxy.name, url, getProviderName(proxy))
     },

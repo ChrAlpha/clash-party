@@ -14,6 +14,7 @@ import { BiCopy, BiDownload, BiKey } from 'react-icons/bi'
 import { IoIosHelpCircle } from 'react-icons/io'
 import { platform, version } from '@renderer/utils/init'
 import { useTranslation } from 'react-i18next'
+import { TAILSCALE_AUTH_KEY_REQUIRES_GIST_ENCRYPTION_ERROR } from '../../../../shared/tailscale'
 import SettingItem from '../base/base-setting-item'
 import SettingCard from '../base/base-setting-card'
 
@@ -172,7 +173,13 @@ const MihomoConfig: React.FC = () => {
                   await navigator.clipboard.writeText(`${url}/raw/clash-party.yaml`)
                 }
               } catch (e) {
-                toast.error(String(e))
+                // Map the known Tailscale-auth-key-without-encryption failure to a
+                // translated message instead of surfacing the raw untranslated error string.
+                if (String(e).includes(TAILSCALE_AUTH_KEY_REQUIRES_GIST_ENCRYPTION_ERROR)) {
+                  toast.error(t('mihomo.gist.error.tailscaleAuthKeyRequiresEncryption'))
+                } else {
+                  toast.error(String(e))
+                }
               }
             }}
           >

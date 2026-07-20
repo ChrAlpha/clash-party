@@ -1,9 +1,11 @@
 import { createHash } from 'crypto'
-import { dialog } from 'electron'
+import { dialog, Notification } from 'electron'
+import i18next from 'i18next'
 import * as chromeRequest from '../utils/chromeRequest'
 import { getAppConfig } from '../config/app'
 import { getControledMihomoConfig } from '../config/controledMihomo'
 import { DEFAULT_MIHOMO_PORTS } from '../../shared/appConfig'
+import { TAILSCALE_AUTH_KEY_REQUIRES_GIST_ENCRYPTION_ERROR } from '../../shared/tailscale'
 import { getRuntimeConfigStr } from '../core/factory'
 import { encryptAgeContent, generateAgeKeyPair } from '../utils/age'
 import { createLogger } from '../utils/logger'
@@ -26,6 +28,10 @@ const gistApiLogger = createLogger('GistApi')
 let runtimeConfigUploadTimer: ReturnType<typeof setTimeout> | undefined
 let runtimeConfigUploadQueue: Promise<void> = Promise.resolve()
 let lastUploadedRuntimeConfigHash: string | undefined
+// Tracks whether the user has already been notified that scheduled Gist sync is currently
+// blocked by a plaintext Tailscale auth-key without age encryption enabled, so we notify once per
+// condition change rather than on every scheduled sync attempt while it persists.
+let tailscaleAuthKeyGistSyncBlockedNotified = false
 let uploadingRuntimeConfigHash: string | undefined
 
 function hashRuntimeConfig(runtimeConfig: string): string {
@@ -117,7 +123,11 @@ async function uploadRuntimeConfigContent(runtimeConfig: string): Promise<boolea
   const { githubToken, gistAgeEncrypt = false, gistAgeRecipient } = await getAppConfig()
   if (!githubToken) return false
   if (!gistAgeEncrypt && containsTailscaleAuthKey(parse<{ proxies?: unknown }>(runtimeConfig))) {
-    throw new Error('Tailscale auth-key requires Gist Runtime Config Age Encryption')
+    // Kept as a stable, untranslated marker string (see shared/tailscale.ts) rather than an Error
+    // subclass: it must still be recognizable both here (same process) and by the renderer after
+    // crossing the Electron IPC boundary, which does not preserve custom Error prototypes
+    // after crossing the Electron IPC boundary.
+    throw new Error(TAILSCALE_AUTH_KEY_REQUIRES_GIST_ENCRYPTION_ERROR)
   }
   const gists = await listGists(githubToken)
   const gist = gists.find((gist) => gist.description === 'Auto Synced Clash Party Runtime Config')
@@ -183,11 +193,38 @@ export function scheduleRuntimeConfigUpload(): void {
       .then(async () => {
         try {
           await uploadRuntimeConfigIfChanged()
+          tailscaleAuthKeyGistSyncBlockedNotified = false
         } catch (error) {
           gistApiLogger.warn('Failed to sync runtime config to Gist', error)
+          notifyTailscaleAuthKeyGistSyncBlockedOnce(error)
         }
       })
   }, 300)
+}
+
+function isTailscaleAuthKeyGistEncryptionError(error: unknown): boolean {
+  return (
+    error instanceof Error && error.message === TAILSCALE_AUTH_KEY_REQUIRES_GIST_ENCRYPTION_ERROR
+  )
+}
+
+// Scheduled Gist sync previously swallowed this specific failure with a warn-log
+// only, so auto-sync silently stopped with no user-visible signal. Fire a proactive, translated
+// OS notification the first time the condition appears, and stay quiet on every following tick
+// while it persists so we don't spam the user; reset as soon as sync succeeds or fails for an
+// unrelated reason.
+function notifyTailscaleAuthKeyGistSyncBlockedOnce(error: unknown): void {
+  if (!isTailscaleAuthKeyGistEncryptionError(error)) {
+    tailscaleAuthKeyGistSyncBlockedNotified = false
+    return
+  }
+  if (tailscaleAuthKeyGistSyncBlockedNotified) return
+  tailscaleAuthKeyGistSyncBlockedNotified = true
+
+  new Notification({
+    title: i18next.t('mihomo.gist.notification.tailscaleAuthKeyBlocked.title'),
+    body: i18next.t('mihomo.gist.notification.tailscaleAuthKeyBlocked.body')
+  }).show()
 }
 
 export async function generateGistAgeKeyPair(): Promise<GistAgeKeyPair> {

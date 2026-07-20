@@ -13,6 +13,7 @@ import { generateProfile, getRuntimeConfig } from './factory'
 import { getMihomoIpcPath } from './manager'
 import { TailscaleLogCapture } from './tailscaleLogCapture'
 import { TailscaleLoginCache } from './tailscaleLoginCache'
+import { findUnverifiedProviderTailscaleProxies } from './tailscale'
 import {
   groupProxySources,
   indexProviderProxies,
@@ -33,6 +34,38 @@ const TAILSCALE_LOG_CAPTURE_DURATION_MS = 45_000
 const TAILSCALE_LOGIN_CACHE_DURATION_MS = 5 * 60 * 1000
 const webSocketReadyCancellations = new WeakMap<WebSocket, (reason: Error) => void>()
 const tailscaleLoginCache = new TailscaleLoginCache(TAILSCALE_LOGIN_CACHE_DURATION_MS, 100)
+// Remembers the last set of HTTP/File-provider Tailscale proxies we warned about, keyed by a
+// stable signature, so a UI page polling /providers/proxies does not spam the log on every fetch.
+let lastWarnedUnverifiedProviderTailscaleProxiesKey = ''
+
+// HTTP/File proxy-providers are fetched by the core at runtime, so the app never
+// sees whether their Tailscale entries set a `state-dir`. We cannot inject one for them (doing so
+// would give every such node the *same* identity, which is worse), so the only safe move is to
+// warn loudly that these nodes are at risk of colliding on the core's default state directory.
+function warnUnverifiedProviderTailscaleProxies(
+  providers: Record<string, IMihomoProxyProvider>
+): void {
+  const unverified = findUnverifiedProviderTailscaleProxies(providers)
+  if (unverified.length === 0) {
+    lastWarnedUnverifiedProviderTailscaleProxiesKey = ''
+    return
+  }
+
+  const key = unverified
+    .map(({ providerName, proxyName }) => `${providerName}\0${proxyName}`)
+    .sort()
+    .join('\n')
+  if (key === lastWarnedUnverifiedProviderTailscaleProxiesKey) return
+  lastWarnedUnverifiedProviderTailscaleProxiesKey = key
+
+  mihomoApiLogger.warn(
+    'Tailscale proxies sourced from HTTP/File proxy-providers cannot be given an app-managed ' +
+      'state-dir (their payload is fetched by the core and never seen by the app). Without a ' +
+      "unique 'state-dir' set in the provider's own payload, these nodes will collide on the " +
+      "core's default state directory and share one Tailscale identity.",
+    unverified
+  )
+}
 
 function invalidateTailscaleLoginCache(): void {
   tailscaleLoginCache.clear()
@@ -317,7 +350,13 @@ async function resolveProviderProxies(
   if (names.size === 0) return indexProviderProxies([], names)
 
   if (fallbackToAllProviders || providerNames.size > PROVIDER_DETAIL_FETCH_THRESHOLD) {
-    const providers = Object.values((await mihomoProxyProviders()).providers)
+    // GET /providers/proxies also returns synthetic Compatible providers (a 'default'
+    // provider containing every static proxy/group, plus one per proxy-group). Those are
+    // not real providers and must be excluded before indexing, or GLOBAL/include-all groups
+    // would spuriously resolve their static members as "provider proxies".
+    const providers = Object.values((await mihomoProxyProviders()).providers).filter(
+      (provider) => provider.vehicleType !== 'Compatible'
+    )
     return indexProviderProxies(providers, names)
   }
 
@@ -329,8 +368,11 @@ async function resolveProviderProxies(
   const resolvedProviderNames = new Set<string>()
   results.forEach((result, index) => {
     if (result.status !== 'fulfilled') return
-    providers.push(result.value)
     resolvedProviderNames.add(requestedProviderNames[index])
+    // Real providers are never named/typed as the synthetic Compatible ones, but guard
+    // anyway so a Compatible provider can never be indexed as a source of real proxies.
+    if (result.value.vehicleType === 'Compatible') return
+    providers.push(result.value)
   })
   return indexProviderProxies(providers, names, resolvedProviderNames)
 }
@@ -339,6 +381,13 @@ export const mihomoGroups = async (): Promise<IMihomoMixedGroup[]> => {
   const { mode = 'rule' } = await getControledMihomoConfig()
   if (mode === 'direct') return []
   const [proxies, runtime] = await Promise.all([mihomoProxies(), getRuntimeConfig()])
+  const runtimeDirectItems = [
+    ...((runtime?.proxies ?? []) as { name?: unknown }[]),
+    ...((runtime?.['proxy-groups'] ?? []) as { name?: unknown }[])
+  ]
+  const runtimeDirectProxyNames = new Set(
+    runtimeDirectItems.flatMap(({ name }) => (typeof name === 'string' ? [name] : []))
+  )
   const rawGroups: {
     group: IMihomoGroup
     providers: string[] | undefined
@@ -349,7 +398,10 @@ export const mihomoGroups = async (): Promise<IMihomoMixedGroup[]> => {
     (group: { name: string; url?: string } & ProviderGroupSourceConfig) => {
       const proxy = proxies.proxies[group.name]
       if (isMihomoGroup(proxy) && !proxy.hidden) {
-        const { providerNames, directProxyNames } = groupProxySources(group)
+        const { providerNames, directProxyNames } = groupProxySources(
+          group,
+          runtimeDirectProxyNames
+        )
         rawGroups.push({
           group: { ...proxy, testUrl: group.url },
           providers: providerNames,
@@ -362,7 +414,11 @@ export const mihomoGroups = async (): Promise<IMihomoMixedGroup[]> => {
   if (!rawGroups.find(({ group }) => group.name === 'GLOBAL')) {
     const global = proxies.proxies['GLOBAL']
     if (isMihomoGroup(global) && !global.hidden) {
-      rawGroups.push({ group: global, providers: undefined, directProxyNames: undefined })
+      rawGroups.push({
+        group: global,
+        providers: undefined,
+        directProxyNames: new Set(runtimeDirectProxyNames)
+      })
     }
   }
 
@@ -404,7 +460,9 @@ export const mihomoGroups = async (): Promise<IMihomoMixedGroup[]> => {
 
 export const mihomoProxyProviders = async (): Promise<IMihomoProxyProviders> => {
   const instance = await getAxios()
-  return await instance.get('/providers/proxies')
+  const providers = (await instance.get('/providers/proxies')) as IMihomoProxyProviders
+  warnUnverifiedProviderTailscaleProxies(providers.providers)
+  return providers
 }
 
 export const mihomoUpdateProxyProviders = async (name: string): Promise<void> => {
@@ -486,6 +544,9 @@ export const mihomoHotReloadConfig = async (): Promise<void> => {
   const configPath = diffWorkDir ? mihomoWorkConfigPath(current) : mihomoWorkConfigPath('work')
   mihomoApiLogger.info(`hot reload config path: ${configPath}`)
   const instance = await getAxios()
+  // A hot reload can swap the entire runtime config (providers, state dirs, proxies), so unlike
+  // a single provider update there is no meaningful subset of proxies to preserve here -
+  // a full clear is intentional.
   invalidateTailscaleLoginCache()
   await instance.put('/configs?force=true', { path: configPath })
   mihomoApiLogger.info('hot reload config completed')
@@ -606,6 +667,10 @@ const mihomoMemory = async (): Promise<void> => {
 }
 
 export const startMihomoLogs = async (): Promise<void> => {
+  // Clear any leftover Tailscale capture override: otherwise a settings log-level change
+  // that lands while a capture window is still open would reconnect the ws at the stale 'info'
+  // override instead of the newly configured level.
+  logsStreamLevelOverride = undefined
   activateStream(logsStream)
   await mihomoLogs()
 }

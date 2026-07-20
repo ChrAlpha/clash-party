@@ -23,6 +23,11 @@ describe('provider proxy resolver', () => {
       providerNames: undefined,
       directProxyNames: undefined
     })
+
+    expect(groupProxySources({ 'include-all': true }, new Set(['direct']))).toEqual({
+      providerNames: undefined,
+      directProxyNames: new Set(['direct'])
+    })
   })
 
   it('keeps same-named proxies scoped to their provider', () => {

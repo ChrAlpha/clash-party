@@ -21,13 +21,18 @@ type ProviderProxyResolution =
   | { status: 'resolved'; proxy: IMihomoProxy }
   | { status: 'ambiguous' | 'unknown' }
 
-export function groupProxySources(group: ProviderGroupSourceConfig): ProviderGroupSources {
+export function groupProxySources(
+  group: ProviderGroupSourceConfig,
+  allDirectProxyNames?: ReadonlySet<string>
+): ProviderGroupSources {
   const includesAllProxies = group['include-all'] === true || group['include-all-proxies'] === true
   const includesAllProviders =
     group['include-all'] === true || group['include-all-providers'] === true
   return {
     providerNames: includesAllProviders ? undefined : [...(group.use ?? [])],
-    directProxyNames: includesAllProxies ? undefined : new Set(group.proxies ?? [])
+    directProxyNames: includesAllProxies
+      ? allDirectProxyNames && new Set(allDirectProxyNames)
+      : new Set(group.proxies ?? [])
   }
 }
 
